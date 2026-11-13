@@ -1,0 +1,84 @@
+name: Validate browser 196
+on:
+  push:
+    branches: [qa-196-20261113]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 7391ccb6504d93a698e40a289e5a0429eca3bf7b
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+      - run: google-chrome --version
+      - run: bundle exec rake browser
+        env:
+          BROWSER_PATH: /usr/bin/google-chrome
+      - name: JavaScript errors must fail
+        env:
+          BROWSER_PATH: /usr/bin/google-chrome
+        run: |
+          echo 'throw new Error("browser-regression-probe");' >> assets/index.js
+          if bundle exec rake browser > js-regression.log 2>&1; then
+            cat js-regression.log
+            exit 1
+          fi
+          grep -F 'browser-regression-probe' temp/browser/browser.log
+          cp -r temp/browser temp/browser-js
+          git checkout -- assets/index.js
+      - name: Broken sorting must fail
+        env:
+          BROWSER_PATH: /usr/bin/google-chrome
+        run: |
+          sed -i '/tablesorter();/d' assets/index.js
+          if bundle exec rake browser > sorting-regression.log 2>&1; then
+            cat sorting-regression.log
+            exit 1
+          fi
+          grep -F 'Timed out waiting' sorting-regression.log
+          cp -r temp/browser temp/browser-sorting
+          git checkout -- assets/index.js
+      - name: Invalid SRI must fail
+        env:
+          BROWSER_PATH: /usr/bin/google-chrome
+        run: |
+          sed -i 's/, response.body)$/, response.body + " ")/' test/browser/test_print.rb
+          if bundle exec rake browser > integrity-regression.log 2>&1; then
+            cat integrity-regression.log
+            exit 1
+          fi
+          grep -i 'integrity' temp/browser/browser.log
+          cp -r temp/browser temp/browser-integrity
+          git checkout -- test/browser/test_print.rb
+      - name: Missing Chromium must fail
+        run: |
+          if BROWSER_PATH=/missing/chromium bundle exec rake browser > missing-browser.log 2>&1; then
+            cat missing-browser.log
+            exit 1
+          fi
+          cat missing-browser.log
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: browser-diagnostics
+          path: temp/browser*/
+  ruby:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 7391ccb6504d93a698e40a289e5a0429eca3bf7b
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+      - run: sudo apt-get update && sudo apt-get install -y tidy
+      - run: bundle exec rubocop
+      - run: bundle exec rake
